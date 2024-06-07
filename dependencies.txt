@@ -1,0 +1,42 @@
+   <dependencies>
+        <!-- Spring Boot Starter Data JPA: Proporciona las bibliotecas necesarias para utilizar JPA (Java Persistence API) con Spring Boot -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Starter Web: Proporciona las bibliotecas necesarias para crear aplicaciones web y RESTful APIs usando Spring MVC -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Spring Boot DevTools: Proporciona herramientas de desarrollo para facilitar el desarrollo de aplicaciones Spring Boot, incluyendo recarga automática y configuración simplificada -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Lombok: Reduce la cantidad de código repetitivo en Java, como getters, setters, constructores, etc. -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring Boot Starter Test: Proporciona bibliotecas y configuraciones necesarias para realizar pruebas unitarias e integrales en aplicaciones Spring Boot -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- JavaPoet: Facilita la generación de código Java de manera programática -->
+        <dependency>
+            <groupId>com.squareup</groupId>
+            <artifactId>javapoet</artifactId>
+            <version>1.13.0</version>
+        </dependency>
+    </dependencies>
