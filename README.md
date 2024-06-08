@@ -14,3 +14,5 @@ You need to replace these values with the path to your project and your package 
 ## Example of Usage in Spring Boot Application
 
 To use the AutoComponentGenerator in your Spring Boot application, you can configure it as a bean and set the properties accordingly.
+
+```
