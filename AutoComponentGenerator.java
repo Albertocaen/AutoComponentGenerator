@@ -1,9 +1,7 @@
 package org.proyecto.fastdeliveryp_v1.generator;
 
 import com.squareup.javapoet.*;
-import jakarta.persistence.EntityManagerFactory;
-import jakarta.persistence.Id;
-import jakarta.persistence.PersistenceUnit;
+import jakarta.persistence.*;
 import jakarta.persistence.metamodel.EntityType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -11,6 +9,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.*;
+
 import javax.lang.model.element.Modifier;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -35,23 +34,25 @@ public class AutoComponentGenerator {
     @PersistenceUnit
     private EntityManagerFactory entityManagerFactory;
 
+    /**
+     * This method is executed when the application is fully initialized and ready to receive requests.
+     * Using @EventListener(ApplicationReadyEvent.class) ensures that all beans, including the EntityManager,
+     * are fully initialized and available. This avoids issues that may occur with @PostConstruct,
+     * which may be executed before the entire application context is fully set up.
+     */
     @EventListener(ApplicationReadyEvent.class)
     public void run() {
-        System.out.println("AutoComponentGenerator: Initialization started.");
 
         Set<EntityType<?>> entities = entityManagerFactory.getMetamodel().getEntities();
         List<Class<?>> entityClasses = entities.stream()
                 .map(EntityType::getJavaType)
                 .collect(Collectors.toList());
 
-        System.out.println("Total entities found: " + entityClasses.size());
-
         if (entityClasses.isEmpty()) {
             System.out.println("No entities found.");
         } else {
             try {
                 for (Class<?> entityClass : entityClasses) {
-                    System.out.println("Processing entity: " + entityClass.getSimpleName());
                     createDto(entityClass);
                     createMapper(entityClass);
                     createRepository(entityClass);
@@ -62,9 +63,14 @@ public class AutoComponentGenerator {
                 e.printStackTrace();
             }
         }
-
-        System.out.println("AutoComponentGenerator: Initialization completed.");
     }
+
+    /**
+     * Generates a DTO class for the given entity, omitting fields that represent relationships.
+     *
+     * @param entityClass the entity class to generate a DTO for
+     * @throws IOException if an I/O error occurs
+     */
 
     private void createDto(Class<?> entityClass) throws IOException {
         String packageName = BASE_PACKAGE + ".dto";
@@ -83,7 +89,9 @@ public class AutoComponentGenerator {
                 .addAnnotation(ClassName.get("lombok", "Data"));
 
         for (Field field : entityClass.getDeclaredFields()) {
-            dtoBuilder.addField(field.getType(), field.getName(), Modifier.PRIVATE);
+            if (!isRelation(field)) {
+                dtoBuilder.addField(field.getType(), field.getName(), Modifier.PRIVATE);
+            }
         }
 
         JavaFile javaFile = JavaFile.builder(packageName, dtoBuilder.build())
@@ -91,6 +99,13 @@ public class AutoComponentGenerator {
 
         javaFile.writeTo(Paths.get(outputDir));
     }
+
+    /**
+     * Generates a Mapper interface for the given entity, handling the transformation between entity and DTO.
+     *
+     * @param entityClass the entity class to generate a Mapper for
+     * @throws IOException if an I/O error occurs
+     */
 
     private void createMapper(Class<?> entityClass) throws IOException {
         String packageName = BASE_PACKAGE + ".mapper";
@@ -104,25 +119,30 @@ public class AutoComponentGenerator {
             return;
         }
 
-        TypeSpec mapperClass = TypeSpec.interfaceBuilder(className)
-                .addModifiers(Modifier.PUBLIC)
-                .addMethod(MethodSpec.methodBuilder("toDto")
-                        .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
-                        .returns(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"))
-                        .addParameter(entityClass, "entity")
-                        .build())
-                .addMethod(MethodSpec.methodBuilder("toEntity")
-                        .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
-                        .returns(entityClass)
-                        .addParameter(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"), "dto")
-                        .build())
+        TypeSpec.Builder mapperClassBuilder = TypeSpec.interfaceBuilder(className)
+                .addModifiers(Modifier.PUBLIC);
+
+        MethodSpec toDtoMethod = MethodSpec.methodBuilder("toDto")
+                .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
+                .returns(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"))
+                .addParameter(entityClass, "entity")
                 .build();
 
-        JavaFile javaFile = JavaFile.builder(packageName, mapperClass)
+        MethodSpec toEntityMethod = MethodSpec.methodBuilder("toEntity")
+                .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
+                .returns(entityClass)
+                .addParameter(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"), "dto")
+                .build();
+
+        mapperClassBuilder.addMethod(toDtoMethod);
+        mapperClassBuilder.addMethod(toEntityMethod);
+
+        JavaFile javaFile = JavaFile.builder(packageName, mapperClassBuilder.build())
                 .build();
 
         javaFile.writeTo(Paths.get(outputDir));
     }
+
 
     private void createRepository(Class<?> entityClass) throws IOException {
         String packageName = BASE_PACKAGE + ".repository";
@@ -150,6 +170,13 @@ public class AutoComponentGenerator {
         javaFile.writeTo(Paths.get(outputDir));
     }
 
+    /**
+     * Generates a Service class for the given entity, handling CRUD operations.
+     * The ID type is dynamically determined based on the entity's ID field.
+     *
+     * @param entityClass the entity class to generate a Service for
+     * @throws IOException if an I/O error occurs
+     */
     private void createService(Class<?> entityClass) throws IOException {
         String packageName = BASE_PACKAGE + ".service";
         String className = entityClass.getSimpleName() + "Service";
@@ -161,7 +188,8 @@ public class AutoComponentGenerator {
             System.out.println(className + " already exists. Skipping generation.");
             return;
         }
-        // get id value
+
+        // Get ID type from the entity class
         Class<?> idType = Long.class; // default value
         for (Field field : entityClass.getDeclaredFields()) {
             if (field.isAnnotationPresent(Id.class)) {
@@ -204,6 +232,14 @@ public class AutoComponentGenerator {
 
         javaFile.writeTo(Paths.get(outputDir));
     }
+
+    /**
+     * Generates a REST Controller class for the given entity, handling RESTful endpoints.
+     * The ID type is dynamically determined based on the entity's ID field.
+     *
+     * @param entityClass the entity class to generate a REST Controller for
+     * @throws IOException if an I/O error occurs
+     */
 
     private void createRestController(Class<?> entityClass) throws IOException {
         String packageName = BASE_PACKAGE + ".restcontroller";
@@ -271,7 +307,6 @@ public class AutoComponentGenerator {
     }
 
 
-
     private void createDirectoryIfNotExists(Path directoryPath) {
         if (!Files.exists(directoryPath)) {
             try {
@@ -280,5 +315,18 @@ public class AutoComponentGenerator {
                 e.printStackTrace();
             }
         }
+    }
+
+    /**
+     * Checks if the given field represents a JPA relationship.
+     *
+     * @param field the field to check
+     * @return true if the field is annotated with a JPA relationship annotation, false otherwise
+     */
+    private boolean isRelation(Field field) {
+        return field.isAnnotationPresent(OneToOne.class) ||
+                field.isAnnotationPresent(OneToMany.class) ||
+                field.isAnnotationPresent(ManyToOne.class) ||
+                field.isAnnotationPresent(ManyToMany.class);
     }
 }
