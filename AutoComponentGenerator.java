@@ -1,13 +1,12 @@
-package org.proyecto.baco.generator;
+package org.proyecto.fastdeliveryp_v1.generator;
 
 import com.squareup.javapoet.*;
 import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.Id;
 import jakarta.persistence.PersistenceUnit;
 import jakarta.persistence.metamodel.EntityType;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -162,6 +161,14 @@ public class AutoComponentGenerator {
             System.out.println(className + " already exists. Skipping generation.");
             return;
         }
+        // get id value
+        Class<?> idType = Long.class; // default value
+        for (Field field : entityClass.getDeclaredFields()) {
+            if (field.isAnnotationPresent(Id.class)) {
+                idType = field.getType();
+                break;
+            }
+        }
 
         TypeSpec serviceClass = TypeSpec.classBuilder(className)
                 .addModifiers(Modifier.PUBLIC)
@@ -176,7 +183,7 @@ public class AutoComponentGenerator {
                 .addMethod(MethodSpec.methodBuilder("findById")
                         .addModifiers(Modifier.PUBLIC)
                         .returns(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"))
-                        .addParameter(Long.class, "id")
+                        .addParameter(idType, "id")
                         .addStatement("return repository.findById(id).map(mapper::toDto).orElse(null)")
                         .build())
                 .addMethod(MethodSpec.methodBuilder("save")
@@ -187,7 +194,7 @@ public class AutoComponentGenerator {
                         .build())
                 .addMethod(MethodSpec.methodBuilder("deleteById")
                         .addModifiers(Modifier.PUBLIC)
-                        .addParameter(Long.class, "id")
+                        .addParameter(idType, "id")
                         .addStatement("repository.deleteById(id)")
                         .build())
                 .build();
@@ -209,6 +216,14 @@ public class AutoComponentGenerator {
             System.out.println(className + " already exists. Skipping generation.");
             return;
         }
+        // get id value
+        Class<?> idType = Long.class; // default value
+        for (Field field : entityClass.getDeclaredFields()) {
+            if (field.isAnnotationPresent(Id.class)) {
+                idType = field.getType();
+                break;
+            }
+        }
 
         TypeSpec restControllerClass = TypeSpec.classBuilder(className)
                 .addModifiers(Modifier.PUBLIC)
@@ -229,7 +244,7 @@ public class AutoComponentGenerator {
                                 .addMember("value", "$S", "/{id}")
                                 .build())
                         .returns(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"))
-                        .addParameter(Long.class, "id")
+                        .addParameter(idType, "id")
                         .addStatement("return service.findById(id)")
                         .build())
                 .addMethod(MethodSpec.methodBuilder("save")
@@ -244,7 +259,7 @@ public class AutoComponentGenerator {
                         .addAnnotation(AnnotationSpec.builder(DeleteMapping.class)
                                 .addMember("value", "$S", "/{id}")
                                 .build())
-                        .addParameter(Long.class, "id")
+                        .addParameter(idType, "id")
                         .addStatement("service.deleteById(id)")
                         .build())
                 .build();
@@ -254,6 +269,7 @@ public class AutoComponentGenerator {
 
         javaFile.writeTo(Paths.get(outputDir));
     }
+
 
 
     private void createDirectoryIfNotExists(Path directoryPath) {
