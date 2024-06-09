@@ -3,6 +3,9 @@ package org.proyecto.fastdeliveryp_v1.generator;
 import com.squareup.javapoet.*;
 import jakarta.persistence.*;
 import jakarta.persistence.metamodel.EntityType;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -23,11 +26,17 @@ import java.util.stream.Collectors;
 @Component
 public class AutoComponentGenerator {
 
-    //Set the name of the outputDir in the properties
+    private static final Logger logger = LoggerFactory.getLogger(AutoComponentGenerator.class);
+
+    /**
+     * Set the name of the outputDir in the properties
+     */
     @Value("${generator.outputDir}")
     private String outputDir;
 
-    //Configure the name of the BASE_PACKAGE in the properties
+    /**
+     * Configure the name of the BASE_PACKAGE in the properties
+     */
     @Value("${generator.basePackage}")
     private String BASE_PACKAGE;
 
@@ -49,7 +58,7 @@ public class AutoComponentGenerator {
                 .collect(Collectors.toList());
 
         if (entityClasses.isEmpty()) {
-            System.out.println("No entities found.");
+            logger.info("No entities found.");
         } else {
             try {
                 for (Class<?> entityClass : entityClasses) {
@@ -66,10 +75,16 @@ public class AutoComponentGenerator {
     }
 
     /**
-     * Generates a DTO class for the given entity, omitting fields that represent relationships.
+     * Generates a DTO class for the given entity.
+     * <p>
+     * This method processes the given entity class to create a corresponding Data Transfer Object (DTO) class.
+     * Fields representing relationships are included as references to their respective DTOs.
+     * If the entity class extends a superclass, the generated DTO will include the annotation
+     * {@code @EqualsAndHashCode(callSuper = true)} to ensure proper behavior of equals and hashCode methods.
+     * </p>
      *
      * @param entityClass the entity class to generate a DTO for
-     * @throws IOException if an I/O error occurs
+     * @throws IOException if an I/O error occurs during the generation process
      */
 
     private void createDto(Class<?> entityClass) throws IOException {
@@ -80,17 +95,25 @@ public class AutoComponentGenerator {
         createDirectoryIfNotExists(outputPath.getParent());
 
         if (Files.exists(outputPath)) {
-            System.out.println(className + " already exists. Skipping generation.");
+            logIfExists(outputPath, className);
             return;
         }
-
         TypeSpec.Builder dtoBuilder = TypeSpec.classBuilder(className)
                 .addModifiers(Modifier.PUBLIC)
                 .addAnnotation(ClassName.get("lombok", "Data"));
 
+        if (entityClass.getSuperclass() != null && !entityClass.getSuperclass().equals(Object.class)) {
+            dtoBuilder.addAnnotation(AnnotationSpec.builder(ClassName.get("lombok", "EqualsAndHashCode"))
+                    .addMember("callSuper", "$L", true)
+                    .build());
+        }
+
         for (Field field : entityClass.getDeclaredFields()) {
             if (!isRelation(field)) {
                 dtoBuilder.addField(field.getType(), field.getName(), Modifier.PRIVATE);
+            } else {
+                // Agregar referencia a la relación en el DTO
+                dtoBuilder.addField(ClassName.get(BASE_PACKAGE + ".dto", field.getType().getSimpleName() + "Dto"), field.getName(), Modifier.PRIVATE);
             }
         }
 
@@ -101,10 +124,16 @@ public class AutoComponentGenerator {
     }
 
     /**
-     * Generates a Mapper interface for the given entity, handling the transformation between entity and DTO.
+     * Generates a Mapper interface for the given entity.
+     * <p>
+     * This method processes the given entity class to create a corresponding Mapper interface that handles
+     * the transformation between the entity and its DTO. The generated Mapper includes the {@code @Mapper(componentModel = "spring")}
+     * annotation to integrate with Spring's dependency injection. Additionally, mappings for entity relationships
+     * are included to ensure proper conversion between entities and DTOs.
+     * </p>
      *
      * @param entityClass the entity class to generate a Mapper for
-     * @throws IOException if an I/O error occurs
+     * @throws IOException if an I/O error occurs during the generation process
      */
 
     private void createMapper(Class<?> entityClass) throws IOException {
@@ -115,33 +144,61 @@ public class AutoComponentGenerator {
         createDirectoryIfNotExists(outputPath.getParent());
 
         if (Files.exists(outputPath)) {
-            System.out.println(className + " already exists. Skipping generation.");
+            logIfExists(outputPath, className);
             return;
         }
 
         TypeSpec.Builder mapperClassBuilder = TypeSpec.interfaceBuilder(className)
-                .addModifiers(Modifier.PUBLIC);
+                .addModifiers(Modifier.PUBLIC)
+                .addAnnotation(AnnotationSpec.builder(ClassName.get("org.mapstruct", "Mapper"))
+                        .addMember("componentModel", "$S", "spring")
+                        .build());
 
-        MethodSpec toDtoMethod = MethodSpec.methodBuilder("toDto")
+        MethodSpec.Builder toDtoMethodBuilder = MethodSpec.methodBuilder("toDto")
                 .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
                 .returns(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"))
-                .addParameter(entityClass, "entity")
-                .build();
+                .addParameter(entityClass, "entity");
 
-        MethodSpec toEntityMethod = MethodSpec.methodBuilder("toEntity")
+        MethodSpec.Builder toEntityMethodBuilder = MethodSpec.methodBuilder("toEntity")
                 .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
                 .returns(entityClass)
-                .addParameter(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"), "dto")
-                .build();
+                .addParameter(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"), "dto");
 
-        mapperClassBuilder.addMethod(toDtoMethod);
-        mapperClassBuilder.addMethod(toEntityMethod);
+        for (Field field : entityClass.getDeclaredFields()) {
+            if (isRelation(field)) {
+                AnnotationSpec mappingAnnotation = AnnotationSpec.builder(ClassName.get("org.mapstruct", "Mapping"))
+                        .addMember("source", "$S", field.getName())
+                        .addMember("target", "$S", field.getName())
+                        .build();
+                toDtoMethodBuilder.addAnnotation(mappingAnnotation);
+                toEntityMethodBuilder.addAnnotation(mappingAnnotation);
+            }
+        }
+
+        mapperClassBuilder.addMethod(toDtoMethodBuilder.build());
+        mapperClassBuilder.addMethod(toEntityMethodBuilder.build());
 
         JavaFile javaFile = JavaFile.builder(packageName, mapperClassBuilder.build())
                 .build();
 
         javaFile.writeTo(Paths.get(outputDir));
     }
+
+    /**
+     * Generates a Repository interface for the given entity, handling data access operations.
+     * <p>
+     * This method creates a repository interface that extends JpaRepository for the specified entity class.
+     * The repository interface will provide CRUD operations and data access capabilities for the entity.
+     * </p>
+     * <p>
+     * The generated repository interface will be placed in the appropriate package structure defined by
+     * the base package and output directory. If the repository file already exists, the generation process
+     * will be skipped to avoid overwriting existing files.
+     * </p>
+     *
+     * @param entityClass the entity class to generate a Repository for
+     * @throws IOException if an I/O error occurs during the generation process
+     */
 
 
     private void createRepository(Class<?> entityClass) throws IOException {
@@ -152,7 +209,7 @@ public class AutoComponentGenerator {
         createDirectoryIfNotExists(outputPath.getParent());
 
         if (Files.exists(outputPath)) {
-            System.out.println(className + " already exists. Skipping generation.");
+            logIfExists(outputPath, className);
             return;
         }
 
@@ -172,11 +229,17 @@ public class AutoComponentGenerator {
 
     /**
      * Generates a Service class for the given entity, handling CRUD operations.
-     * The ID type is dynamically determined based on the entity's ID field.
+     * <p>
+     * This method dynamically determines the ID type based on the entity's ID field and generates
+     * the corresponding Service class. The generated Service includes methods for finding all entities,
+     * finding by ID, saving, and deleting by ID. It ensures proper handling of the ID type to maintain
+     * compatibility with the entity's structure.
+     * </p>
      *
      * @param entityClass the entity class to generate a Service for
-     * @throws IOException if an I/O error occurs
+     * @throws IOException if an I/O error occurs during the generation process
      */
+
     private void createService(Class<?> entityClass) throws IOException {
         String packageName = BASE_PACKAGE + ".service";
         String className = entityClass.getSimpleName() + "Service";
@@ -185,7 +248,7 @@ public class AutoComponentGenerator {
         createDirectoryIfNotExists(outputPath.getParent());
 
         if (Files.exists(outputPath)) {
-            System.out.println(className + " already exists. Skipping generation.");
+            logIfExists(outputPath, className);
             return;
         }
 
@@ -235,11 +298,21 @@ public class AutoComponentGenerator {
 
     /**
      * Generates a REST Controller class for the given entity, handling RESTful endpoints.
-     * The ID type is dynamically determined based on the entity's ID field.
+     * <p>
+     * This method dynamically determines the ID type based on the entity's ID field and generates
+     * the corresponding REST Controller class. The generated Controller includes endpoints for
+     * finding all entities, finding by ID, saving, and deleting by ID. It ensures proper handling
+     * of the ID type to maintain compatibility with the entity's structure.
+     * </p>
+     * <p>
+     * The generated REST Controller will include necessary annotations and dependency injections
+     * such as @RestController, @Autowired for the service, and appropriate HTTP method mappings.
+     * </p>
      *
      * @param entityClass the entity class to generate a REST Controller for
-     * @throws IOException if an I/O error occurs
+     * @throws IOException if an I/O error occurs during the generation process
      */
+
 
     private void createRestController(Class<?> entityClass) throws IOException {
         String packageName = BASE_PACKAGE + ".restcontroller";
@@ -249,24 +322,22 @@ public class AutoComponentGenerator {
         createDirectoryIfNotExists(outputPath.getParent());
 
         if (Files.exists(outputPath)) {
-            System.out.println(className + " already exists. Skipping generation.");
+            logIfExists(outputPath, className);
             return;
         }
-        // get id value
-        Class<?> idType = Long.class; // default value
-        for (Field field : entityClass.getDeclaredFields()) {
-            if (field.isAnnotationPresent(Id.class)) {
-                idType = field.getType();
-                break;
-            }
-        }
+
+
+        AnnotationSpec autowiredAnnotation = AnnotationSpec.builder(ClassName.get("org.springframework.beans.factory.annotation", "Autowired")).build();
+
 
         TypeSpec restControllerClass = TypeSpec.classBuilder(className)
                 .addModifiers(Modifier.PUBLIC)
-                .addField(ClassName.get(BASE_PACKAGE + ".service", entityClass.getSimpleName() + "Service"), "service", Modifier.PRIVATE)
                 .addAnnotation(RestController.class)
                 .addAnnotation(AnnotationSpec.builder(RequestMapping.class)
                         .addMember("value", "$S", "/api/" + entityClass.getSimpleName().toLowerCase() + "s")
+                        .build())
+                .addField(FieldSpec.builder(ClassName.get(BASE_PACKAGE + ".service", entityClass.getSimpleName() + "Service"), "service", Modifier.PRIVATE)
+                        .addAnnotation(autowiredAnnotation)
                         .build())
                 .addMethod(MethodSpec.methodBuilder("findAll")
                         .addModifiers(Modifier.PUBLIC)
@@ -280,7 +351,7 @@ public class AutoComponentGenerator {
                                 .addMember("value", "$S", "/{id}")
                                 .build())
                         .returns(ClassName.get(BASE_PACKAGE + ".dto", entityClass.getSimpleName() + "Dto"))
-                        .addParameter(idType, "id")
+                        .addParameter(ClassName.get(Long.class), "id")
                         .addStatement("return service.findById(id)")
                         .build())
                 .addMethod(MethodSpec.methodBuilder("save")
@@ -295,18 +366,24 @@ public class AutoComponentGenerator {
                         .addAnnotation(AnnotationSpec.builder(DeleteMapping.class)
                                 .addMember("value", "$S", "/{id}")
                                 .build())
-                        .addParameter(idType, "id")
+                        .addParameter(ClassName.get(Long.class), "id")
                         .addStatement("service.deleteById(id)")
                         .build())
                 .build();
 
+
         JavaFile javaFile = JavaFile.builder(packageName, restControllerClass)
+                .addStaticImport(ClassName.get("org.springframework.beans.factory.annotation", "Autowired"))
                 .build();
 
         javaFile.writeTo(Paths.get(outputDir));
     }
 
-
+    /**
+     * Creates the directory and any nonexistent parent directories if they do not already exist.
+     *
+     * @param directoryPath the path of the directory to create
+     */
     private void createDirectoryIfNotExists(Path directoryPath) {
         if (!Files.exists(directoryPath)) {
             try {
@@ -328,5 +405,17 @@ public class AutoComponentGenerator {
                 field.isAnnotationPresent(OneToMany.class) ||
                 field.isAnnotationPresent(ManyToOne.class) ||
                 field.isAnnotationPresent(ManyToMany.class);
+    }
+
+    /**
+     * Logs a message indicating that a file already exists.
+     *
+     * @param outputPath the path of the file
+     * @param className  the name of the class
+     */
+    private void logIfExists(Path outputPath, String className) {
+        if (Files.exists(outputPath)) {
+            logger.info("{} already exists. Skipping generation.", className);
+        }
     }
 }
